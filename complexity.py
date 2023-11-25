@@ -135,6 +135,7 @@ def process_apk_files(base_path):
     """
     results = []
     for root, dirs, files in os.walk(base_path):
+        label = 'malware' if 'malware' in root else 'benign'
         print(f"Checking directory: {root}")  # Debug information
         for file in files:
             print(f"Found file: {file}") 
@@ -154,6 +155,7 @@ def process_apk_files(base_path):
                 analysis_time = time.time() - start_time
                 results.append({
                     "apk_path": apk_path,
+                    "label": label,
                     "complexity_score": complexity_score,
                     "analysis_time": analysis_time,
                     "permissions_count": len(features["permissions"]),
