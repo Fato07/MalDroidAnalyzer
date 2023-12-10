@@ -2,6 +2,8 @@ import math
 import os
 import time
 from androguard.misc import AnalyzeAPK
+import hashlib
+import pandas as pd
 
 # Define the maximum expected values for each feature based on your dataset
 max_values = {
@@ -24,6 +26,27 @@ weights = {
     "code_length": 1.0,
     "file_size_mb": 0.5,
 }
+
+def calculate_hash(apk_path, hash_type='sha256'):
+    """
+    Calculate the hash of the APK file.
+    Supported hash_type values are 'md5', 'sha1', and 'sha256'.
+    """
+    h = None
+    if hash_type == 'md5':
+        h = hashlib.md5()
+    elif hash_type == 'sha1':
+        h = hashlib.sha1()
+    elif hash_type == 'sha256':
+        h = hashlib.sha256()
+    else:
+        raise ValueError("Unsupported hash type specified.")
+
+    with open(apk_path, 'rb') as file:
+        # Read and update hash string value in blocks of 4K
+        for byte_block in iter(lambda: file.read(4096), b""):
+            h.update(byte_block)
+    return h.hexdigest()
 
 def entropy(s):
     """
@@ -87,6 +110,9 @@ def extract_features(apk_path):
     code_length = calculate_code_length(dexes)
     file_size_bytes = os.path.getsize(apk_path)
 
+    # Calculate file hash
+    file_hash = calculate_hash(apk_path, 'sha256')
+
     return {
         "permissions": permissions,
         "native_code": native_code,
@@ -95,6 +121,7 @@ def extract_features(apk_path):
         "apk_entropy": apk_entropy,
         "code_length": code_length,
         "file_size": file_size_bytes,
+        "file_hash": file_hash,
     }
 
 def analyze_complexity(features):
@@ -135,10 +162,10 @@ def process_apk_files(base_path):
     """
     results = []
     for root, dirs, files in os.walk(base_path):
-        label = 'malware' if 'malware' in root else 'benign'
+        # Determine the label based on the presence of 'malware' in the directory path
+        label = 'malware' if 'malware' in root.lower() else 'benign'
         print(f"Checking directory: {root}")  # Debug information
         for file in files:
-            print(f"Found file: {file}") 
             if file.endswith(".apk"):
                 apk_path = os.path.join(root, file)
                 start_time = time.time()
@@ -155,7 +182,7 @@ def process_apk_files(base_path):
                 analysis_time = time.time() - start_time
                 results.append({
                     "apk_path": apk_path,
-                    "label": label,
+                    "label": label,  # Include the label in the results
                     "complexity_score": complexity_score,
                     "analysis_time": analysis_time,
                     "permissions_count": len(features["permissions"]),
@@ -165,8 +192,9 @@ def process_apk_files(base_path):
                     "apk_entropy": features["apk_entropy"],
                     "code_length": features["code_length"],
                     "file_size": features["file_size"],
+                    "file_hash": features["file_hash"],
                 })
-                print(f"{apk_path}: Complexity Score - {complexity_score}, Analysis Time - {analysis_time} seconds")
+                print(f"{apk_path}: Label - {label}, Complexity Score - {complexity_score}, Analysis Time - {analysis_time} seconds")
                 print(f"Permissions Count - {len(features['permissions'])}")
                 print(f"Native Code Count - {len(features['native_code'])}")
                 print(f"Obfuscated Strings Count - {features['obfuscated_strings_count']}")
@@ -192,10 +220,30 @@ def export_results(results, filename="analysis_results.csv"):
         dict_writer.writeheader()
         dict_writer.writerows(results)
 
+def analyze_variance_and_correlation(results):
+    # Convert results to a DataFrame
+    df = pd.DataFrame(results)
+
+    # Calculate variance for each feature
+    variances = df.var()
+
+    # Map label to numeric value for correlation calculation
+    df['label_numeric'] = df['label'].map({'malware': 1, 'benign': 0})
+
+    # Calculate correlation of each feature with the label
+    correlations = df.corr()['label_numeric']
+
+    return variances, correlations
+
 def main():
-    base_path = "./AndroidMalwareSamples"
+    base_path = "./AndroidAPKSamples"
     results = process_apk_files(base_path)
     export_results(results)
+
+    # Analyze variance and correlation
+    variances, correlations = analyze_variance_and_correlation(results)
+    print("Variances:\n", variances)
+    print("Correlations:\n", correlations)
 
 if __name__ == "__main__":
     main()
