@@ -1,5 +1,6 @@
 # MalDroidAnalyzer
 
-DataSet: https://github.com/cryptwareapps/Malware-Database/tree/main/Malware/Android/SMS%20Malware
+Handling DataSet:
+- Download the malware folder and replace the path in `complexity.py` to scan
 
 
