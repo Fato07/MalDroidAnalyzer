@@ -15,11 +15,11 @@ from androguard.misc import AnalyzeAPK
 
 # Create a logger
 logger = logging.getLogger("SingleAPKProcessor")
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)  # Set to DEBUG for detailed logs
 
 # Create console handler
 console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
+console_handler.setLevel(logging.DEBUG)  # Capture all logs in the console
 
 # Define log formatter
 formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
@@ -234,6 +234,7 @@ def main():
         logger.error(f"APK file does not exist: {apk_path}")
         sys.exit(1)
 
+    logger.info(f"Starting processing for APK: {apk_path}")
     features = extract_features(apk_path)
     if features:
         complexity_score = calculate_complexity_score(features)
