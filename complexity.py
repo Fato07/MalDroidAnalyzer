@@ -1,38 +1,42 @@
-# process_single_apk.py
-
-import sys
 import gc
-import math
 import os
 import hashlib
 import csv
 import logging
+from logging.handlers import RotatingFileHandler
 from androguard.misc import AnalyzeAPK
+from tqdm import tqdm
+import time
+import math
 
-# =======================
-# Logging Setup
-# =======================
+# ============================
+# Logging Setup with Rotation
+# ============================
 
-# Create a logger
-logger = logging.getLogger("SingleAPKProcessor")
+logger = logging.getLogger("APKAnalysis")
 logger.setLevel(logging.INFO)
 
-# Create console handler
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
 
-# Define log formatter
+file_handler = RotatingFileHandler(
+    "complexity_analysis_individual.log",
+    maxBytes=10 * 1024 * 1024,  # 10 MB
+    backupCount=5,  # Keep up to 5 backup log files
+)
+file_handler.setLevel(logging.INFO)
+
 formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 console_handler.setFormatter(formatter)
+file_handler.setFormatter(formatter)
 
-# Add handler to logger
 logger.addHandler(console_handler)
+logger.addHandler(file_handler)
 
-# =======================
-# Feature Extraction Constants
-# =======================
+# ====================================
+# Define Feature Extraction Constants
+# ====================================
 
-# Maximum expected values for normalization
 max_values = {
     "permissions_count": 30,
     "native_code_count": 10,
@@ -43,7 +47,6 @@ max_values = {
     "file_size_mb": 100,
 }
 
-# Weights for each feature
 weights = {
     "permissions_count": 1.0,
     "native_code_count": 1.5,
@@ -54,15 +57,12 @@ weights = {
     "file_size_mb": 0.5,
 }
 
-# =======================
-# Helper Functions
-# =======================
+# ======================
+# Helper Function: Hash
+# ======================
 
 
 def calculate_hash(apk_path, hash_type="sha256"):
-    """
-    Calculate the hash of the APK file using md5, sha1, or sha256.
-    """
     hash_funcs = {"md5": hashlib.md5, "sha1": hashlib.sha1, "sha256": hashlib.sha256}
     h = hash_funcs.get(hash_type)()
     if h is None:
@@ -78,10 +78,12 @@ def calculate_hash(apk_path, hash_type="sha256"):
         return "Hash_Error"
 
 
+# =====================
+# Helper Function: Entropy
+# =====================
+
+
 def entropy(s):
-    """
-    Calculate the Shannon entropy of a given string.
-    """
     if not s:
         return 0
     prob = {char: float(s.count(char)) / len(s) for char in set(s)}
@@ -89,16 +91,15 @@ def entropy(s):
 
 
 def is_string_obfuscated(string):
-    """
-    Determine if a string is likely to be obfuscated based on its entropy.
-    """
     return len(string) > 20 and entropy(string) > 4.5
 
 
+# ===================================
+# Feature Extraction Functions
+# ===================================
+
+
 def extract_obfuscation_features(dexes):
-    """
-    Extract obfuscation-related features from the DEX bytecode.
-    """
     try:
         return sum(
             1
@@ -112,9 +113,6 @@ def extract_obfuscation_features(dexes):
 
 
 def extract_dynamic_code_features(dexes):
-    """
-    Detect dynamic code execution features in the APK.
-    """
     try:
         return sum(
             1
@@ -129,9 +127,6 @@ def extract_dynamic_code_features(dexes):
 
 
 def calculate_apk_entropy(dexes):
-    """
-    Calculate the average entropy of all strings in the APK's DEX files.
-    """
     try:
         total_entropy = sum(
             entropy(string) for dex in dexes for string in dex.get_strings()
@@ -144,37 +139,29 @@ def calculate_apk_entropy(dexes):
 
 
 def calculate_code_length(dexes):
-    """
-    Calculate the total length of code in all DEX files.
-    """
     try:
         return sum(
-            len(list(method.get_code().get_bc().get_instructions()))
+            len(list(method.get_instructions()))
             for dex in dexes
             for method in dex.get_methods()
-            if method.get_code()
+            if hasattr(method, "get_code") and method.get_code() is not None
         )
     except Exception as e:
         logger.error(f"Error calculating code length: {e}")
         return 0
 
 
-# =======================
-# Feature Extraction
-# =======================
+# =============================
+# Feature Extraction for APK
+# =============================
 
 
 def extract_features(apk_path):
-    """
-    Extract relevant features from the APK file.
-    """
     try:
         a, dexes, dx = AnalyzeAPK(apk_path)
         features = {
-            "permissions": ";".join(a.get_permissions()),
-            "permissions_count": len(a.get_permissions()),
-            "native_code": ";".join(a.get_libraries()),
-            "native_code_count": len(a.get_libraries()),
+            "permissions": len(a.get_permissions()),
+            "native_code": len(a.get_libraries()),
             "obfuscated_strings_count": extract_obfuscation_features(dexes),
             "dynamic_code_use_count": extract_dynamic_code_features(dexes),
             "apk_entropy": calculate_apk_entropy(dexes),
@@ -183,7 +170,6 @@ def extract_features(apk_path):
             "file_hash": calculate_hash(apk_path, "sha256"),
         }
 
-        # Clean up memory before returning the features
         del a, dexes, dx
         gc.collect()
         return features
@@ -192,15 +178,12 @@ def extract_features(apk_path):
         return None
 
 
-# =======================
+# =============================
 # Complexity Score Calculation
-# =======================
+# =============================
 
 
 def calculate_complexity_score(features):
-    """
-    Calculate the complexity score using normalized features and assigned weights.
-    """
     if features is None:
         return 0
     try:
@@ -217,34 +200,20 @@ def calculate_complexity_score(features):
         return 0
 
 
-# =======================
-# Main Function
-# =======================
+# =====================
+# APK Processing Function
+# =====================
 
 
-def main():
-    if len(sys.argv) != 3:
-        logger.error("Usage: python process_single_apk.py <apk_path> <output_csv_path>")
-        sys.exit(1)
-
-    apk_path = sys.argv[1]
-    output_csv = sys.argv[2]
-
-    if not os.path.exists(apk_path):
-        logger.error(f"APK file does not exist: {apk_path}")
-        sys.exit(1)
-
+def process_apk_file(apk_path, master_csv):
     features = extract_features(apk_path)
     if features:
         complexity_score = calculate_complexity_score(features)
         result = {
             "apk_path": apk_path,
-            "label": "malware" if "malware" in apk_path.lower() else "benign",
             "complexity_score": complexity_score,
-            "permissions": features["permissions"],
-            "permissions_count": features["permissions_count"],
-            "native_code": features["native_code"],
-            "native_code_count": features["native_code_count"],
+            "permissions_count": features["permissions"],
+            "native_code_count": features["native_code"],
             "obfuscated_strings_count": features["obfuscated_strings_count"],
             "dynamic_code_use_count": features["dynamic_code_use_count"],
             "apk_entropy": features["apk_entropy"],
@@ -252,16 +221,15 @@ def main():
             "file_size_mb": features["file_size_mb"],
             "file_hash": features["file_hash"],
         }
+        logger.info(f"Processed {apk_path}: Complexity Score = {complexity_score}")
 
+        # Append the result directly to the master CSV
         try:
-            with open(output_csv, "w", newline="", encoding="utf-8") as csvfile:
+            with open(master_csv, "a", newline="", encoding="utf-8") as csvfile:
                 fieldnames = [
                     "apk_path",
-                    "label",
                     "complexity_score",
-                    "permissions",
                     "permissions_count",
-                    "native_code",
                     "native_code_count",
                     "obfuscated_strings_count",
                     "dynamic_code_use_count",
@@ -271,13 +239,82 @@ def main():
                     "file_hash",
                 ]
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
+                if os.path.getsize(master_csv) == 0:
+                    writer.writeheader()
                 writer.writerow(result)
-            logger.info(f"Successfully processed and saved {apk_path} to {output_csv}")
         except Exception as e:
-            logger.error(f"Error writing CSV for {apk_path}: {e}")
+            logger.error(f"Error writing to master CSV for {apk_path}: {e}")
+
+        del result
+        gc.collect()
     else:
-        logger.error(f"No features extracted for {apk_path}")
+        # Log failed APK processing
+        try:
+            with open(master_csv, "a", newline="", encoding="utf-8") as csvfile:
+                fieldnames = [
+                    "apk_path",
+                    "complexity_score",
+                    "permissions_count",
+                    "native_code_count",
+                    "obfuscated_strings_count",
+                    "dynamic_code_use_count",
+                    "apk_entropy",
+                    "code_length",
+                    "file_size_mb",
+                    "file_hash",
+                ]
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                if os.path.getsize(master_csv) == 0:
+                    writer.writeheader()
+                writer.writerow(
+                    {
+                        "apk_path": apk_path,
+                        "complexity_score": 0,
+                        "permissions_count": "Failed",
+                        "native_code_count": "Failed",
+                        "obfuscated_strings_count": "Failed",
+                        "dynamic_code_use_count": "Failed",
+                        "apk_entropy": "Failed",
+                        "code_length": "Failed",
+                        "file_size_mb": "Failed",
+                        "file_hash": "Failed",
+                    }
+                )
+        except Exception as e:
+            logger.error(f"Error logging failed APK to master CSV for {apk_path}: {e}")
+
+
+# =====================
+# APK File Generator
+# =====================
+
+
+def apk_file_generator(base_path):
+    for root, _, files in os.walk(base_path):
+        for file in files:
+            if file.endswith(".apk"):
+                yield os.path.join(root, file)
+
+
+# =====================
+# Main Function
+# =====================
+
+
+def main():
+    base_path = "./KronoDroid_Real_Malware_04"  # Update this path as needed
+    master_csv = "analysis_results_master.csv"
+
+    logger.info("Starting APK analysis...")
+
+    apk_gen = apk_file_generator(base_path)
+    total_apks = sum(1 for _ in apk_file_generator(base_path))
+    apk_gen = apk_file_generator(base_path)
+
+    for apk_path in tqdm(apk_gen, total=total_apks, desc="Processing APKs"):
+        process_apk_file(apk_path, master_csv)
+
+    logger.info("APK analysis completed.")
 
 
 if __name__ == "__main__":
