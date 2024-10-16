@@ -301,21 +301,45 @@ def apk_file_generator(base_path):
 # =====================
 
 
-def main():
+def main(resume=False):
     base_path = "./KronoDroid_Real_Malware_04"  # Update this path as needed
     master_csv = "analysis_results_master.csv"
 
     logger.info("Starting APK analysis...")
+
+    processed_apks = set()
+    if resume and os.path.exists(master_csv):
+        try:
+            with open(master_csv, "r", newline="", encoding="utf-8") as csvfile:
+                reader = csv.DictReader(csvfile)
+                for row in reader:
+                    processed_apks.add(row["apk_path"])
+            logger.info(f"Resuming from {len(processed_apks)} processed APKs.")
+        except Exception as e:
+            logger.error(f"Error reading existing master CSV file: {e}")
 
     apk_gen = apk_file_generator(base_path)
     total_apks = sum(1 for _ in apk_file_generator(base_path))
     apk_gen = apk_file_generator(base_path)
 
     for apk_path in tqdm(apk_gen, total=total_apks, desc="Processing APKs"):
+        if apk_path in processed_apks:
+            logger.info(f"Skipping already processed APK: {apk_path}")
+            continue
         process_apk_file(apk_path, master_csv)
 
     logger.info("APK analysis completed.")
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="APK Analysis Script")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume analysis from the last processed APK",
+    )
+    args = parser.parse_args()
+
+    main(resume=args.resume)
