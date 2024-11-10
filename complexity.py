@@ -13,18 +13,21 @@ import math
 # Logging Setup with Rotation
 # ============================
 
+# Set root logger to DEBUG
+logging.getLogger().setLevel(logging.DEBUG)
+
 logger = logging.getLogger("APKAnalysis")
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
+console_handler.setLevel(logging.DEBUG)
 
 file_handler = RotatingFileHandler(
     "complexity_analysis_individual.log",
     maxBytes=10 * 1024 * 1024,  # 10 MB
     backupCount=5,  # Keep up to 5 backup log files
 )
-file_handler.setLevel(logging.INFO)
+file_handler.setLevel(logging.DEBUG)
 
 formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 console_handler.setFormatter(formatter)
@@ -157,6 +160,7 @@ def extract_obfuscation_features(dexes):
 
 def extract_dynamic_code_features(dexes):
     try:
+        logger.debug("Starting dynamic code feature extraction")
         dynamic_patterns = [
             "Ldalvik/system/DexClassLoader",
             "Ldalvik/system/PathClassLoader",
@@ -196,6 +200,7 @@ def extract_dynamic_code_features(dexes):
 def calculate_apk_entropy(dexes):
     """Enhanced APK entropy calculation with weighted sections"""
     try:
+        logger.debug("Starting APK entropy calculation")
         # Initialize counters
         total_weighted_entropy = 0
         total_weight = 0
@@ -252,6 +257,7 @@ def calculate_apk_entropy(dexes):
 
 def calculate_code_length(dexes):
     try:
+        logger.debug("Starting code length calculation")
         total = 0
         for dex in dexes:
             logger.debug(f"Processing DEX file for code length")
@@ -289,6 +295,7 @@ def calculate_code_length(dexes):
 def extract_native_code_features(a):
     """Efficient and accurate native code detection"""
     try:
+        logger.debug("Starting native code feature extraction")
         native_elements = set()
         
         # 1. Core native libraries (most important indicator)
@@ -495,6 +502,8 @@ def main(resume=False):
     base_path = "/Users/fathindosunmu/Downloads/KronoDroid_Real_Malware_01"  # Update this path as needed
     master_csv = "analysis_results_master.csv"
 
+    # Verify logging level
+    logger.debug("Debug logging is enabled")
     logger.info("Starting APK analysis...")
 
     processed_apks = set()
