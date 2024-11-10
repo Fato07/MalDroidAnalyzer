@@ -254,6 +254,40 @@ def calculate_code_length(dexes):
 # =============================
 
 
+def extract_native_code_features(a):
+    """Efficient and accurate native code detection"""
+    try:
+        native_elements = set()
+        
+        # 1. Core native libraries (most important indicator)
+        native_elements.update(a.get_libraries())
+        
+        # 2. Native methods from DEX (direct JNI usage)
+        for dex in a.get_dex():
+            for method in dex.get_methods():
+                if method.get_access_flags_string() and 'native' in method.get_access_flags_string():
+                    native_elements.add(method.get_class_name())
+        
+        # 3. System.loadLibrary calls (dynamic loading)
+        for dex in a.get_dex():
+            for method in dex.get_methods():
+                if method.get_code():
+                    for instruction in method.get_code().get_instructions():
+                        if 'Ljava/lang/System;->loadLibrary' in str(instruction):
+                            native_elements.add('dynamic_loading_present')
+                            break  # One instance is enough to indicate usage
+        
+        count = len(native_elements)
+        logger.debug(f"Native code elements found: {count}")
+        if count > 0:
+            logger.debug(f"Native elements: {native_elements}")
+            
+        return count
+
+    except Exception as e:
+        logger.error(f"Error extracting native code features: {e}")
+        return 0
+
 def extract_features(apk_path):
     try:
         a, dexes, dx = AnalyzeAPK(apk_path)
@@ -274,7 +308,7 @@ def extract_features(apk_path):
 
         features = {
             "permissions": len(a.get_permissions()),
-            "native_code": len(a.get_libraries()),
+            "native_code": extract_native_code_features(a),
             "obfuscated_strings_count": extract_obfuscation_features(dexes),
             "dynamic_code_use_count": extract_dynamic_code_features(dexes),
             "apk_entropy": calculate_apk_entropy(dexes),
