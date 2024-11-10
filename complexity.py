@@ -91,7 +91,37 @@ def entropy(s):
 
 
 def is_string_obfuscated(string):
-    return len(string) > 20 and entropy(string) > 4.5
+    """Enhanced obfuscation detection with more sophisticated checks"""
+    try:
+        # Convert to string if bytes
+        if isinstance(string, bytes):
+            string = string.decode('utf-8', errors='ignore')
+        
+        # Skip empty or very short strings
+        if not string or len(string) < 4:
+            return False
+
+        # Skip common Android/Java patterns
+        common_patterns = [
+            'android.', 'java.', 'javax.', 'com.android.',
+            'onCreate', 'onResume', 'onPause',
+            'activity_', 'layout_', 'text_', 'button_'
+        ]
+        if any(pattern in string for pattern in common_patterns):
+            return False
+
+        # Enhanced entropy check with length consideration
+        str_entropy = entropy(string)
+        if len(string) > 20:
+            return str_entropy > 4.5
+        elif len(string) > 10:
+            return str_entropy > 4.0
+        else:
+            return str_entropy > 3.5
+
+    except Exception as e:
+        logger.debug(f"Error in is_string_obfuscated: {e}")
+        return False
 
 
 # ===================================
@@ -100,13 +130,26 @@ def is_string_obfuscated(string):
 
 
 def extract_obfuscation_features(dexes):
+    """Improved obfuscation feature extraction"""
     try:
-        return sum(
-            1
-            for dex in dexes
-            for string in dex.get_strings()
-            if is_string_obfuscated(string)
-        )
+        obfuscated_count = 0
+        total_strings = 0
+        
+        for dex in dexes:
+            strings = dex.get_strings()
+            for string in strings:
+                total_strings += 1
+                if is_string_obfuscated(string):
+                    obfuscated_count += 1
+                    
+                    # Early exit if we've found enough obfuscated strings
+                    if obfuscated_count >= max_values['obfuscated_strings_count']:
+                        logger.debug(f"Max obfuscated strings reached: {obfuscated_count}")
+                        return obfuscated_count
+
+        logger.debug(f"Found {obfuscated_count} obfuscated strings out of {total_strings}")
+        return obfuscated_count
+
     except Exception as e:
         logger.error(f"Error extracting obfuscation features: {e}")
         return 0
@@ -140,12 +183,49 @@ def extract_dynamic_code_features(dexes):
 
 
 def calculate_apk_entropy(dexes):
+    """Enhanced APK entropy calculation with weighted sections"""
     try:
-        total_entropy = sum(
-            entropy(string) for dex in dexes for string in dex.get_strings()
-        )
-        string_count = sum(1 for dex in dexes for _ in dex.get_strings())
-        return total_entropy / max(string_count, 1)
+        # Initialize counters
+        total_weighted_entropy = 0
+        total_weight = 0
+        
+        for dex in dexes:
+            # Calculate entropy for different sections with different weights
+            sections = {
+                'strings': {'data': dex.get_strings(), 'weight': 1.0},
+                'types': {'data': dex.get_types(), 'weight': 1.2},
+                'methods': {'data': [m.get_name() for m in dex.get_methods()], 'weight': 1.5}
+            }
+            
+            for section_name, section_data in sections.items():
+                try:
+                    # Combine all data in the section
+                    combined_data = ''.join(str(item) for item in section_data['data'])
+                    if combined_data:
+                        section_entropy = entropy(combined_data)
+                        weight = section_data['weight']
+                        
+                        total_weighted_entropy += section_entropy * weight
+                        total_weight += weight
+                        
+                        logger.debug(f"Section {section_name} entropy: {section_entropy:.2f}")
+                
+                except Exception as section_e:
+                    logger.debug(f"Error processing {section_name} section: {section_e}")
+                    continue
+        
+        if total_weight == 0:
+            logger.warning("No valid sections found for entropy calculation")
+            return 0
+            
+        final_entropy = total_weighted_entropy / total_weight
+        
+        # Normalize to ensure it's between 0 and 8 (typical entropy range)
+        final_entropy = min(max(final_entropy, 0), 8)
+        
+        logger.debug(f"Final weighted entropy: {final_entropy:.2f}")
+        return final_entropy
+
     except Exception as e:
         logger.error(f"Error calculating APK entropy: {e}")
         return 0
