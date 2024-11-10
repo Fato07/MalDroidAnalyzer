@@ -114,13 +114,26 @@ def extract_obfuscation_features(dexes):
 
 def extract_dynamic_code_features(dexes):
     try:
-        return sum(
-            1
-            for dex in dexes
-            for method in dex.get_methods()
-            if "Ldalvik/system/DexClassLoader;" in str(method.get_class_name())
-            or "Ldalvik/system/PathClassLoader;" in str(method.get_class_name())
-        )
+        dynamic_patterns = [
+            "Ldalvik/system/DexClassLoader",
+            "Ldalvik/system/PathClassLoader",
+            "Ldalvik/system/BaseDexClassLoader",
+            "Ljava/lang/reflect/Method",
+            "Landroid/content/pm/PackageManager"
+        ]
+        count = 0
+        for dex in dexes:
+            for method in dex.get_methods():
+                # Check class name
+                class_name = str(method.get_class_name())
+                # Check method calls
+                if method.get_code():
+                    for instruction in method.get_code().get_instructions():
+                        instruction_str = str(instruction)
+                        if any(pattern in instruction_str for pattern in dynamic_patterns):
+                            count += 1
+                            break
+        return count
     except Exception as e:
         logger.error(f"Error extracting dynamic code features: {e}")
         return 0
@@ -140,12 +153,17 @@ def calculate_apk_entropy(dexes):
 
 def calculate_code_length(dexes):
     try:
-        return sum(
-            len(list(method.get_instructions()))
-            for dex in dexes
-            for method in dex.get_methods()
-            if hasattr(method, "get_code") and method.get_code() is not None
-        )
+        total = 0
+        for dex in dexes:
+            methods = dex.get_methods()
+            for method in methods:
+                code = method.get_code()
+                if code:
+                    # Get instructions directly from the code object
+                    instructions = code.get_instructions()
+                    if instructions:
+                        total += sum(1 for _ in instructions)
+        return total
     except Exception as e:
         logger.error(f"Error calculating code length: {e}")
         return 0
@@ -159,6 +177,21 @@ def calculate_code_length(dexes):
 def extract_features(apk_path):
     try:
         a, dexes, dx = AnalyzeAPK(apk_path)
+        if not dexes:
+            logger.warning(f"No dex files found in {apk_path}")
+            return None
+            
+        # Validate dex content
+        valid_dex = False
+        for dex in dexes:
+            if list(dex.get_methods()):
+                valid_dex = True
+                break
+        
+        if not valid_dex:
+            logger.warning(f"No valid methods found in {apk_path}")
+            return None
+
         features = {
             "permissions": len(a.get_permissions()),
             "native_code": len(a.get_libraries()),
