@@ -5,9 +5,12 @@ import csv
 import logging
 from logging.handlers import RotatingFileHandler
 from androguard.misc import AnalyzeAPK
+import androguard
 from tqdm import tqdm
 import time
 import math
+
+print(f"Using androguard version: {androguard.__version__}")
 
 # ============================
 # Logging Setup with Rotation
@@ -41,23 +44,23 @@ logger.addHandler(file_handler)
 # ====================================
 
 max_values = {
-    "permissions_count": 30,
-    "native_code_count": 10,
-    "obfuscated_strings_count": 50,
-    "dynamic_code_use_count": 20,
-    "apk_entropy": 8,
-    "code_length": 10000,
-    "file_size_mb": 100,
+    "permissions_count": 50,          
+    "native_code_count": 10,          
+    "obfuscated_strings_count": 50,   
+    "dynamic_code_use_count": 20,     
+    "apk_entropy": 8.0,              
+    "code_length": 20000,          
+    "file_size_mb": 100,            
 }
 
 weights = {
-    "permissions_count": 1.0,
-    "native_code_count": 1.5,
-    "obfuscated_strings_count": 2.0,
-    "dynamic_code_use_count": 2.5,
-    "apk_entropy": 3.0,
-    "code_length": 1.0,
-    "file_size_mb": 0.5,
+    "permissions_count": 1.0,         
+    "native_code_count": 2.0,          
+    "obfuscated_strings_count": 1.5,  
+    "dynamic_code_use_count": 2.0,   
+    "apk_entropy": 1.0,             
+    "code_length": 1.5,              
+    "file_size_mb": 0.5,            
 }
 
 # ======================
@@ -98,17 +101,25 @@ def is_string_obfuscated(string):
     try:
         # Convert to string if bytes
         if isinstance(string, bytes):
-            string = string.decode('utf-8', errors='ignore')
-        
+            string = string.decode("utf-8", errors="ignore")
+
         # Skip empty or very short strings
         if not string or len(string) < 4:
             return False
 
         # Skip common Android/Java patterns
         common_patterns = [
-            'android.', 'java.', 'javax.', 'com.android.',
-            'onCreate', 'onResume', 'onPause',
-            'activity_', 'layout_', 'text_', 'button_'
+            "android.",
+            "java.",
+            "javax.",
+            "com.android.",
+            "onCreate",
+            "onResume",
+            "onPause",
+            "activity_",
+            "layout_",
+            "text_",
+            "button_",
         ]
         if any(pattern in string for pattern in common_patterns):
             return False
@@ -131,122 +142,125 @@ def is_string_obfuscated(string):
 # Feature Extraction Functions
 # ===================================
 
-
 def extract_obfuscation_features(dexes):
     """Improved obfuscation feature extraction"""
     try:
         obfuscated_count = 0
         total_strings = 0
-        
+
         for dex in dexes:
             strings = dex.get_strings()
             for string in strings:
                 total_strings += 1
                 if is_string_obfuscated(string):
                     obfuscated_count += 1
-                    
+
                     # Early exit if we've found enough obfuscated strings
-                    if obfuscated_count >= max_values['obfuscated_strings_count']:
-                        logger.debug(f"Max obfuscated strings reached: {obfuscated_count}")
+                    if obfuscated_count >= max_values["obfuscated_strings_count"]:
+                        logger.debug(
+                            f"Max obfuscated strings reached: {obfuscated_count}"
+                        )
                         return obfuscated_count
 
-        logger.debug(f"Found {obfuscated_count} obfuscated strings out of {total_strings}")
+        logger.debug(
+            f"Found {obfuscated_count} obfuscated strings out of {total_strings}"
+        )
         return obfuscated_count
 
     except Exception as e:
         logger.error(f"Error extracting obfuscation features: {e}")
+
+def extract_native_code_features(a, dx):
+    """Detect native code by checking for .so files in lib directory"""
+    try:
+        logger.debug("Starting native code feature extraction")
+        native_libraries = a.get_libraries()
+        logger.debug(f"Found native libraries: {native_libraries}")
+        return len(native_libraries)
+    except Exception as e:
+        logger.error(f"Error extracting native code features: {e}")
+        logger.exception("Detailed error trace:")
         return 0
-
-
-def extract_dynamic_code_features(dexes):
+    
+def extract_dynamic_code_features(dx):
+    """Look for dynamic code loading patterns in strings"""
     try:
         logger.debug("Starting dynamic code feature extraction")
         dynamic_patterns = [
-            "Ldalvik/system/DexClassLoader",
-            "Ldalvik/system/PathClassLoader",
-            "Ldalvik/system/BaseDexClassLoader",
-            "Ljava/lang/reflect/Method",
-            "Landroid/content/pm/PackageManager"
+            "DexClassLoader",
+            "PathClassLoader",
+            "BaseDexClassLoader",
+            "loadClass",
+            "loadLibrary",
+            "reflect.Method",
+            "invoke"
         ]
+        
         count = 0
-        logger.debug(f"Checking for dynamic code patterns: {dynamic_patterns}")
-        
-        for dex in dexes:
-            logger.debug(f"Analyzing DEX for dynamic code features")
-            method_count = 0
-            for method in dex.get_methods():
-                class_name = str(method.get_class_name())
-                logger.debug(f"Checking class: {class_name}")
-                
-                if method.get_code():
-                    for instruction in method.get_code().get_instructions():
-                        instruction_str = str(instruction)
-                        for pattern in dynamic_patterns:
-                            if pattern in instruction_str:
-                                logger.debug(f"Found dynamic code pattern '{pattern}' in: {instruction_str}")
-                                count += 1
-                                method_count += 1
-                                break
-            logger.debug(f"Found {method_count} methods with dynamic code features in this DEX")
-        
+        # Search in method names
+        for method in dx.get_methods():
+            method_name = str(method.name)
+            if any(pattern.lower() in method_name.lower() for pattern in dynamic_patterns):
+                logger.debug(f"Found dynamic code pattern in method: {method_name}")
+                count += 1
+                    
         logger.debug(f"Total dynamic code features found: {count}")
         return count
     except Exception as e:
         logger.error(f"Error extracting dynamic code features: {e}")
         logger.exception("Detailed error trace:")
-        return 0
-
-
+        return 0 
+    
 def calculate_apk_entropy(dexes):
-    """Enhanced APK entropy calculation with weighted sections"""
     try:
         logger.debug("Starting APK entropy calculation")
-        # Initialize counters
         total_weighted_entropy = 0
         total_weight = 0
-        
+
         for dex in dexes:
             logger.debug(f"Processing DEX file for entropy calculation")
-            
+
             # Calculate entropy for different sections with different weights
             sections = {
-                'strings': {'data': dex.get_strings(), 'weight': 1.0},
-                'types': {'data': dex.get_types(), 'weight': 1.2},
-                'methods': {'data': [m.get_name() for m in dex.get_methods()], 'weight': 1.5}
+                "strings": {"data": [str(s) for s in dex.get_strings()], "weight": 1.0},
+                "classes": {"data": [str(c) for c in dex.get_classes()], "weight": 1.2},
+                "methods": {"data": [str(m) for m in dex.get_methods()], "weight": 1.5},
             }
-            
+
             for section_name, section_data in sections.items():
                 try:
-                    data = list(section_data['data'])
+                    data = section_data["data"]
                     logger.debug(f"Section {section_name} has {len(data)} elements")
-                    
-                    combined_data = ''.join(str(item) for item in data)
+
+                    combined_data = "".join(data)
                     if combined_data:
                         section_entropy = entropy(combined_data)
-                        weight = section_data['weight']
-                        
+                        weight = section_data["weight"]
+
                         total_weighted_entropy += section_entropy * weight
                         total_weight += weight
-                        
-                        logger.debug(f"Section {section_name} entropy: {section_entropy:.2f} with weight {weight}")
+
+                        logger.debug(
+                            f"Section {section_name} entropy: {section_entropy:.2f} with weight {weight}"
+                        )
                     else:
                         logger.debug(f"Section {section_name} has no data to process")
-                
+
                 except Exception as section_e:
-                    logger.error(f"Error processing {section_name} section: {section_e}")
+                    logger.error(
+                        f"Error processing {section_name} section: {section_e}"
+                    )
                     logger.exception("Detailed section error:")
                     continue
-        
+
         if total_weight == 0:
             logger.warning("No valid sections found for entropy calculation")
             return 0
-            
+
         final_entropy = total_weighted_entropy / total_weight
-        
-        # Normalize to ensure it's between 0 and 8 (typical entropy range)
         final_entropy = min(max(final_entropy, 0), 8)
-        
-        logger.debug(f"Final weighted entropy: {final_entropy:.2f} (total_weighted_entropy: {total_weighted_entropy:.2f}, total_weight: {total_weight:.2f})")
+
+        logger.debug(f"Final weighted entropy: {final_entropy:.2f}")
         return final_entropy
 
     except Exception as e:
@@ -254,120 +268,48 @@ def calculate_apk_entropy(dexes):
         logger.exception("Detailed error trace:")
         return 0
 
-
-def calculate_code_length(dexes):
+def calculate_code_length(dx):
+    """Simple count of DEX methods as a proxy for code length"""
     try:
         logger.debug("Starting code length calculation")
-        total = 0
-        for dex in dexes:
-            logger.debug(f"Processing DEX file for code length")
-            methods = dex.get_methods()
-            method_count = 0
-            instruction_count = 0
-            
-            for method in methods:
-                method_count += 1
-                code = method.get_code()
-                if code:
-                    instructions = code.get_instructions()
-                    if instructions:
-                        count = sum(1 for _ in instructions)
-                        instruction_count += count
-                        total += count
-                        if count > 0:
-                            logger.debug(f"Method {method.get_name()} has {count} instructions")
-                
-            logger.debug(f"Found {method_count} methods with total {instruction_count} instructions in this DEX")
+        total_methods = 0
         
-        logger.debug(f"Total code length across all DEX files: {total}")
-        return total
+        for method in dx.get_methods():
+            total_methods += 1
+            if total_methods % 100 == 0:
+                logger.debug(f"Processed {total_methods} methods...")
+        
+        logger.debug(f"Total methods found: {total_methods}")
+        return total_methods
     except Exception as e:
         logger.error(f"Error calculating code length: {e}")
         logger.exception("Detailed error trace:")
         return 0
-
-
-# =============================
-# Feature Extraction for APK
-# =============================
-
-
-def extract_native_code_features(a):
-    """Efficient and accurate native code detection"""
-    try:
-        logger.debug("Starting native code feature extraction")
-        native_elements = set()
-        
-        # 1. Core native libraries (most important indicator)
-        libs = a.get_libraries()
-        logger.debug(f"Initial native libraries found: {libs}")
-        native_elements.update(libs)
-        
-        # 2. Native methods from DEX (direct JNI usage)
-        for dex in a.get_dex():
-            logger.debug(f"Analyzing DEX file for native methods")
-            method_count = 0
-            for method in dex.get_methods():
-                if method.get_access_flags_string() and 'native' in method.get_access_flags_string():
-                    native_elements.add(method.get_class_name())
-                    method_count += 1
-                    logger.debug(f"Found native method: {method.get_name()} in {method.get_class_name()}")
-            logger.debug(f"Found {method_count} native methods in DEX")
-        
-        # 3. System.loadLibrary calls (dynamic loading)
-        for dex in a.get_dex():
-            logger.debug(f"Analyzing DEX for loadLibrary calls")
-            for method in dex.get_methods():
-                if method.get_code():
-                    for instruction in method.get_code().get_instructions():
-                        instruction_str = str(instruction)
-                        if 'Ljava/lang/System;->loadLibrary' in instruction_str:
-                            native_elements.add('dynamic_loading_present')
-                            logger.debug(f"Found loadLibrary call in {method.get_class_name()}")
-                            break
-        
-        count = len(native_elements)
-        logger.debug(f"Total native code elements found: {count}")
-        if count > 0:
-            logger.debug(f"Native elements details: {native_elements}")
-            
-        return count
-
-    except Exception as e:
-        logger.error(f"Error extracting native code features: {e}")
-        logger.exception("Detailed error trace:")
-        return 0
-
+      
 def extract_features(apk_path):
     try:
-        a, dexes, dx = AnalyzeAPK(apk_path)
-        if not dexes:
+        a, d, dx = AnalyzeAPK(apk_path)
+        if not d:
             logger.warning(f"No dex files found in {apk_path}")
             return None
-            
-        # Validate dex content
-        valid_dex = False
-        for dex in dexes:
-            if list(dex.get_methods()):
-                valid_dex = True
-                break
-        
-        if not valid_dex:
-            logger.warning(f"No valid methods found in {apk_path}")
+
+        # Validate analysis object
+        if not dx:
+            logger.warning(f"Failed to create analysis object for {apk_path}")
             return None
 
         features = {
             "permissions": len(a.get_permissions()),
-            "native_code": extract_native_code_features(a),
-            "obfuscated_strings_count": extract_obfuscation_features(dexes),
-            "dynamic_code_use_count": extract_dynamic_code_features(dexes),
-            "apk_entropy": calculate_apk_entropy(dexes),
-            "code_length": calculate_code_length(dexes),
-            "file_size_mb": os.path.getsize(apk_path) / (1024 * 1024),  # Convert to MB
+            "native_code": extract_native_code_features(a, dx),
+            "obfuscated_strings_count": extract_obfuscation_features(d),
+            "dynamic_code_use_count": extract_dynamic_code_features(dx),
+            "apk_entropy": calculate_apk_entropy(d),
+            "code_length": calculate_code_length(dx),
+            "file_size_mb": os.path.getsize(apk_path) / (1024 * 1024),
             "file_hash": calculate_hash(apk_path, "sha256"),
         }
 
-        del a, dexes, dx
+        del a, d, dx
         gc.collect()
         return features
     except Exception as e:
