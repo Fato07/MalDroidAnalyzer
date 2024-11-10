@@ -165,20 +165,31 @@ def extract_dynamic_code_features(dexes):
             "Landroid/content/pm/PackageManager"
         ]
         count = 0
+        logger.debug(f"Checking for dynamic code patterns: {dynamic_patterns}")
+        
         for dex in dexes:
+            logger.debug(f"Analyzing DEX for dynamic code features")
+            method_count = 0
             for method in dex.get_methods():
-                # Check class name
                 class_name = str(method.get_class_name())
-                # Check method calls
+                logger.debug(f"Checking class: {class_name}")
+                
                 if method.get_code():
                     for instruction in method.get_code().get_instructions():
                         instruction_str = str(instruction)
-                        if any(pattern in instruction_str for pattern in dynamic_patterns):
-                            count += 1
-                            break
+                        for pattern in dynamic_patterns:
+                            if pattern in instruction_str:
+                                logger.debug(f"Found dynamic code pattern '{pattern}' in: {instruction_str}")
+                                count += 1
+                                method_count += 1
+                                break
+            logger.debug(f"Found {method_count} methods with dynamic code features in this DEX")
+        
+        logger.debug(f"Total dynamic code features found: {count}")
         return count
     except Exception as e:
         logger.error(f"Error extracting dynamic code features: {e}")
+        logger.exception("Detailed error trace:")
         return 0
 
 
@@ -190,6 +201,8 @@ def calculate_apk_entropy(dexes):
         total_weight = 0
         
         for dex in dexes:
+            logger.debug(f"Processing DEX file for entropy calculation")
+            
             # Calculate entropy for different sections with different weights
             sections = {
                 'strings': {'data': dex.get_strings(), 'weight': 1.0},
@@ -199,8 +212,10 @@ def calculate_apk_entropy(dexes):
             
             for section_name, section_data in sections.items():
                 try:
-                    # Combine all data in the section
-                    combined_data = ''.join(str(item) for item in section_data['data'])
+                    data = list(section_data['data'])
+                    logger.debug(f"Section {section_name} has {len(data)} elements")
+                    
+                    combined_data = ''.join(str(item) for item in data)
                     if combined_data:
                         section_entropy = entropy(combined_data)
                         weight = section_data['weight']
@@ -208,10 +223,13 @@ def calculate_apk_entropy(dexes):
                         total_weighted_entropy += section_entropy * weight
                         total_weight += weight
                         
-                        logger.debug(f"Section {section_name} entropy: {section_entropy:.2f}")
+                        logger.debug(f"Section {section_name} entropy: {section_entropy:.2f} with weight {weight}")
+                    else:
+                        logger.debug(f"Section {section_name} has no data to process")
                 
                 except Exception as section_e:
-                    logger.debug(f"Error processing {section_name} section: {section_e}")
+                    logger.error(f"Error processing {section_name} section: {section_e}")
+                    logger.exception("Detailed section error:")
                     continue
         
         if total_weight == 0:
@@ -223,11 +241,12 @@ def calculate_apk_entropy(dexes):
         # Normalize to ensure it's between 0 and 8 (typical entropy range)
         final_entropy = min(max(final_entropy, 0), 8)
         
-        logger.debug(f"Final weighted entropy: {final_entropy:.2f}")
+        logger.debug(f"Final weighted entropy: {final_entropy:.2f} (total_weighted_entropy: {total_weighted_entropy:.2f}, total_weight: {total_weight:.2f})")
         return final_entropy
 
     except Exception as e:
         logger.error(f"Error calculating APK entropy: {e}")
+        logger.exception("Detailed error trace:")
         return 0
 
 
@@ -235,17 +254,30 @@ def calculate_code_length(dexes):
     try:
         total = 0
         for dex in dexes:
+            logger.debug(f"Processing DEX file for code length")
             methods = dex.get_methods()
+            method_count = 0
+            instruction_count = 0
+            
             for method in methods:
+                method_count += 1
                 code = method.get_code()
                 if code:
-                    # Get instructions directly from the code object
                     instructions = code.get_instructions()
                     if instructions:
-                        total += sum(1 for _ in instructions)
+                        count = sum(1 for _ in instructions)
+                        instruction_count += count
+                        total += count
+                        if count > 0:
+                            logger.debug(f"Method {method.get_name()} has {count} instructions")
+                
+            logger.debug(f"Found {method_count} methods with total {instruction_count} instructions in this DEX")
+        
+        logger.debug(f"Total code length across all DEX files: {total}")
         return total
     except Exception as e:
         logger.error(f"Error calculating code length: {e}")
+        logger.exception("Detailed error trace:")
         return 0
 
 
@@ -260,32 +292,43 @@ def extract_native_code_features(a):
         native_elements = set()
         
         # 1. Core native libraries (most important indicator)
-        native_elements.update(a.get_libraries())
+        libs = a.get_libraries()
+        logger.debug(f"Initial native libraries found: {libs}")
+        native_elements.update(libs)
         
         # 2. Native methods from DEX (direct JNI usage)
         for dex in a.get_dex():
+            logger.debug(f"Analyzing DEX file for native methods")
+            method_count = 0
             for method in dex.get_methods():
                 if method.get_access_flags_string() and 'native' in method.get_access_flags_string():
                     native_elements.add(method.get_class_name())
+                    method_count += 1
+                    logger.debug(f"Found native method: {method.get_name()} in {method.get_class_name()}")
+            logger.debug(f"Found {method_count} native methods in DEX")
         
         # 3. System.loadLibrary calls (dynamic loading)
         for dex in a.get_dex():
+            logger.debug(f"Analyzing DEX for loadLibrary calls")
             for method in dex.get_methods():
                 if method.get_code():
                     for instruction in method.get_code().get_instructions():
-                        if 'Ljava/lang/System;->loadLibrary' in str(instruction):
+                        instruction_str = str(instruction)
+                        if 'Ljava/lang/System;->loadLibrary' in instruction_str:
                             native_elements.add('dynamic_loading_present')
-                            break  # One instance is enough to indicate usage
+                            logger.debug(f"Found loadLibrary call in {method.get_class_name()}")
+                            break
         
         count = len(native_elements)
-        logger.debug(f"Native code elements found: {count}")
+        logger.debug(f"Total native code elements found: {count}")
         if count > 0:
-            logger.debug(f"Native elements: {native_elements}")
+            logger.debug(f"Native elements details: {native_elements}")
             
         return count
 
     except Exception as e:
         logger.error(f"Error extracting native code features: {e}")
+        logger.exception("Detailed error trace:")
         return 0
 
 def extract_features(apk_path):
